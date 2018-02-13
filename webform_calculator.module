@@ -21,12 +21,43 @@ function webform_calculator_webform_component_info() {
 }
 
 /**
- * Implements hook_webform_submission_presave().
+ * Implements hook_form_alter().
  */
-function webform_calculator_webform_submission_presave($node, &$submission) {
+function webform_calculator_form_alter(&$form, &$form_state, $form_id) {
+  // Check that we are on a multipage webform, then build the data array.
+  if (strpos($form['#form_id'], 'webform_client_form') !== FALSE) {
+    // add our submission handler before webform saves the submission
+    $pos = array_search('webform_client_form_submit', $form['#submit']);
+    array_splice($form['#submit'], $pos, 0, 'webform_calculator_webform_client_submit');
+    if (isset($form['progressbar'])) {
+      $add = array();
+      // Get current page number
+      $page_num = $form['progressbar']['#page_num'];
+      // Get all fields up to the current page, which are not on the current page.
+      $comp_list = $form['#node']->webform['components'];
+      // Check for numeric data among the data that has been submitted so far, then add it to the "add" array.
+      foreach ($comp_list as $key => $comp) {
+        if (isset($form_state['values']['submitted'][$key])) {
+          if (is_numeric($form_state['values']['submitted'][$key])) {
+            $add[$comp['form_key']] = $form_state['values']['submitted'][$key];
+          }
+        }
+      }
+      drupal_add_js(array('webformCalculatorData' => array('data' => $add)), 'setting');
+    }
+  }
+}
+
+/**
+ * Submission handler to do the calculation 
+ */
+function webform_calculator_webform_client_submit($form, &$form_state) {
+  $node = $form['#node'];
+  $components = $node->webform['components'];
+  $submission = new stdClass;
   foreach ($node->webform['components'] as $component) {
     if ($component['type'] == 'formula') {
-      $submission->data[$component['cid']][0] = webform_calculator_replace_formula_values($component, $node, $submission);
+      $form_state['values']['submitted'][$component['cid']] = webform_calculator_replace_formula_values($component, $node, $form_state['values']['submitted']);
     }
   }
 }
@@ -86,7 +117,7 @@ function webform_calculator_get_components_from_formula($formula) {
  * @return float|int
  *   Value of evaluated formula.
  */
-function webform_calculator_replace_formula_values($formula_component, $webform_node, $submission) {
+function webform_calculator_replace_formula_values($formula_component, $webform_node, $values) {
   $formula = $formula_component['value'];
   $components_from_formula = webform_calculator_get_components_from_formula($formula);
 
@@ -99,11 +130,8 @@ function webform_calculator_replace_formula_values($formula_component, $webform_
   foreach ($components_from_formula as $component_key) {
     if (isset($components_by_key[$component_key])) {
       $component = $components_by_key[$component_key];
-      $values = $submission->data[$component['cid']];
-      $sum = 0;
-      foreach ($values as $value) {
-        $sum += $value;
-      }
+      $values = isset($values[$component['cid']]) ? $values[$component['cid']] : 0;
+      $sum = array_sum((array)$values);
       $formula = str_replace('{' . $component_key . '}', '(' . $sum . ')', $formula);
     }
   }
